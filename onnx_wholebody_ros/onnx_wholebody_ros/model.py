@@ -19,7 +19,14 @@ from onnxruntime import (
 )
 
 from sensor_msgs.msg import Image
-from nicefaces.msg import ObjDet2DArray, WholeBodyArray, BBox2D, WholeBody, BodyKeypoint
+from nicefaces.msg import (
+    ObjDet2DArray,
+    WholeBodyArray,
+    BBox2D,
+    WholeBody,
+    BodyKeypoint,
+    TrackData,
+)
 from foxglove_msgs.msg import ImageMarkerArray
 from visualization_msgs.msg import ImageMarker
 from std_msgs.msg import ColorRGBA
@@ -239,6 +246,7 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
         # NOTE: since filtering confidence here has no performance benefit here
         # it should be done client side
+
         if self._pred_pub.get_subscription_count() > 0:
             self._pred_pub.publish(
                 WholeBodyArray(
@@ -252,6 +260,16 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
                                 for (x, y, conf, id) in pose
                             ],
                             is_norm=False,
+                            track=TrackData(
+                                label="person",
+                                keypoints=[
+                                    Point(
+                                        x=kp[0] / img.shape[1], y=kp[1] / img.shape[0]
+                                    )
+                                    for kp in pose
+                                ],
+                                keypoint_scores=[kp[2] for kp in pose],
+                            ),
                         )
                         for pose in poses
                     ],
