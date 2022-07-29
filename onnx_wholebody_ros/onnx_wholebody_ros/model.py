@@ -72,7 +72,7 @@ PROVIDER_OPTS = [
 
 @dataclass
 class WholeBodyCfg(JobCfg):
-    model_path: str = "/code/models/vipnas_res50.onnx"
+    model_path: str = "/models/vipnas_res50.onnx"
     """Local path of model."""
     frames_in_topic: str = "~/frames_in"
     """Video frames to predict on."""
@@ -87,7 +87,7 @@ class WholeBodyCfg(JobCfg):
     # TODO: img_wh should be embedded within exported model metadata
     img_wh: tuple[int, int] = (192, 256)
     """Input resolution."""
-    score_threshold: float = 0.2
+    score_threshold: float = 0.5
     """Minimum confidence level for filtering (ONLY VISUALIZATION MARKERS)"""
     crop_pad: float = 1.25
     """How much additional padding to crop around the bbox."""
