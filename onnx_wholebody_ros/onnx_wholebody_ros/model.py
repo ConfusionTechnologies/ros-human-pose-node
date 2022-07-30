@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 import sys
+from typing import Union
 from copy import copy
 
 import rclpy
@@ -19,20 +20,12 @@ from onnxruntime import (
 )
 
 from sensor_msgs.msg import Image
-from nicefaces.msg import (
-    ObjDet2DArray,
-    WholeBodyArray,
-    BBox2D,
-    WholeBody,
-    BodyKeypoint,
-    TrackData,
-)
+from nicefaces.msg import ObjDet2Ds, WholeBodyArray, BBox2Ds, WholeBody
 from foxglove_msgs.msg import ImageMarkerArray
 from visualization_msgs.msg import ImageMarker
-from std_msgs.msg import ColorRGBA
 from geometry_msgs.msg import Point
 from nicepynode import Job, JobCfg
-from nicepynode.utils import convert_bbox
+from nicepynode.utils import convert_bboxes
 
 from onnx_wholebody_ros.processing import bbox_xyxy2cs, crop_bbox, heatmap2keypoints
 
@@ -72,7 +65,7 @@ PROVIDER_OPTS = [
 
 @dataclass
 class WholeBodyCfg(JobCfg):
-    model_path: str = "/models/vipnas_res50.onnx"
+    model_path: str = "/models/vipnas_mbv3.onnx"
     """Local path of model."""
     frames_in_topic: str = "~/frames_in"
     """Video frames to predict on."""
@@ -95,6 +88,31 @@ class WholeBodyCfg(JobCfg):
     # TODO: mean_rgb & std_rgb should be in model's metadata
     mean_rgb: tuple[float, float, float] = (0.485, 0.456, 0.406)
     std_rgb: tuple[float, float, float] = (0.229, 0.224, 0.225)
+    include_kps: list[Union[int, tuple[int]]] = field(
+        default_factory=lambda: [
+            (1, 19),
+            20,
+            21,
+            23,
+            66,
+            69,
+            63,
+            60,
+            78,
+            72,
+            111,
+            132,
+            99,
+            120,
+            95,
+            116,
+        ]
+    )
+    """list of tuples or int indexes. tuples are converted to slices to index. there are 133 keypoints in coco wholebody. filtering improves performance."""
+    tracked_kps: list[Union[int, tuple[int]]] = field(
+        default_factory=lambda: [1, 6, 7, 12, 13]
+    )
+    """list of tuples or int indexes. tuples are converted to slices to index. which keypoints to expose in TrackData for tracker nodes. filtering improves performance."""
 
 
 # TODO:
@@ -140,7 +158,7 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
         )
 
         self._bbox_sub = Subscriber(
-            node, ObjDet2DArray, cfg.bbox_in_topic, qos_profile=RT_PROFILE
+            node, ObjDet2Ds, cfg.bbox_in_topic, qos_profile=RT_PROFILE
         )
 
         self._synch = ApproximateTimeSynchronizer(
@@ -170,10 +188,6 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
             return True
         return False
 
-    def step(self, delta: float):
-        # Unused for this node
-        return super().step(delta)
-
     def _init_model(self, cfg: WholeBodyCfg):
         self.log.info("Initializing ONNX...")
 
@@ -197,9 +211,59 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
         # model_details = self.metadata.custom_metadata_map
         # self.log.info(f"Model Info: {self.metadata.custom_metadata_map}")
 
+        # calculate keypoints to include
+        if len(cfg.include_kps) > 0:
+            self._include_key = np.r_[
+                tuple(i if isinstance(i, int) else slice(*i) for i in cfg.include_kps)
+            ]
+        else:
+            # includes all 133 keypoints
+            self._include_key = np.r_[1:134]
+
+        if len(cfg.tracked_kps) > 0:
+            ids = np.r_[
+                tuple(i if isinstance(i, int) else slice(*i) for i in cfg.tracked_kps)
+            ]
+            self._tracked_key = np.where(np.in1d(self._include_key, ids))[0]
+        else:
+            # includes all keypoints NOTE: LAGGY
+            self._tracked_key = np.r_[0 : self._include_key.size]
+
+        self.log.info(f"Included Keypoints: {self._include_key.size}")
+        self.log.debug(f"{self._include_key}")
+        self.log.info(f"Keypoints sent to Tracker: {self._tracked_key.size}")
+        self.log.debug(f"{self._tracked_key}")
+
         self.log.info("ONNX initialized")
 
-    def _on_input(self, imgmsg: Image, detsmsg: ObjDet2DArray):
+    def _forward(self, img: np.ndarray, dets: BBox2Ds):
+        dets = convert_bboxes(
+            dets, to_type=BBox2Ds.XYXY, normalize=False, img_wh=img.shape[1::-1]
+        )
+        boxes = np.stack((dets.a, dets.b, dets.c, dets.d)).transpose(1, 0)
+
+        c, s = bbox_xyxy2cs(boxes, self._ratio_wh, self.cfg.crop_pad)
+        crops = crop_bbox(img, c, s, self.cfg.img_wh)
+        crops = (crops / 255 - self.cfg.mean_rgb) / self.cfg.std_rgb
+        x = crops.transpose(0, 3, 1, 2).astype(np.float32)  # NHWC to NCHW
+
+        # output shape is (N, 133, 64, 48), 133 is wholebody kepoints, (64, 48) is heatmap
+        y = self.session.run([self._sess_out_name], {self._sess_in_name: x})[0]
+
+        # filter by include_kps (increases performance)
+        y = y[
+            :, self._include_key - 1, ...
+        ]  # convert id -> index (id start from 1, index from 0)
+
+        coords, conf = heatmap2keypoints(y, c, s)
+        # shape is (n, include_kps, 4), where 4 is (x, y, conf, id)
+        poses = np.concatenate(
+            (coords, conf, np.tile(self._include_key, (conf.shape[0], 1))[..., None]),
+            axis=2,
+        )
+        return poses
+
+    def _on_input(self, imgmsg: Image, detsmsg: ObjDet2Ds):
         if (
             self._pred_pub.get_subscription_count()
             + self._marker_pub.get_subscription_count()
@@ -216,87 +280,57 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
         if 0 in img.shape:
             self.log.debug("Image has invalid shape!")
             return
-        if len(detsmsg.dets) < 1:
-            return
 
-        boxes = np.array(
-            [
-                convert_bbox(
-                    d.box, to_type=BBox2D.XYXY, normalize=False, img_wh=img.shape[1::-1]
-                ).rect
-                for d in detsmsg.dets
-            ]
-        )
-
-        c, s = bbox_xyxy2cs(boxes, self._ratio_wh, self.cfg.crop_pad)
-        crops = crop_bbox(img, c, s, self.cfg.img_wh)
-        crops = (crops / 255 - self.cfg.mean_rgb) / self.cfg.std_rgb
-        x = crops.transpose(0, 3, 1, 2).astype(np.float32)  # NHWC to NCHW
-
-        # output shape is (N, 133, 64, 48), 133 is wholebody kepoints, (64, 48) is heatmap
-        y = self.session.run([self._sess_out_name], {self._sess_in_name: x})[0]
-
-        coords, conf = heatmap2keypoints(y, c, s)
-        # coco wholebody ids
-        ids = (np.arange(conf.size) + 1).reshape(conf.shape)
-        # shape is (n, 133, 4), where 4 is (x, y, conf, id)
-        poses = np.concatenate((coords, conf, ids), axis=2)
+        if len(detsmsg.boxes.a) < 1:
+            poses = np.zeros((0, self._include_key.size, 4), dtype=np.float32)
+        else:
+            # shape is (n, include_kps, 4), where 4 is (x, y, conf, id)
+            poses = self._forward(img, detsmsg.boxes)  # is float64 for some reason
 
         infer_end = self.get_timestamp()
 
-        # NOTE: since filtering confidence here has no performance benefit here
-        # it should be done client side
+        # NOTE: filtering confidence here has no performance benefit here
 
         if self._pred_pub.get_subscription_count() > 0:
-            self._pred_pub.publish(
-                WholeBodyArray(
-                    header=imgmsg.header,
-                    poses=[
-                        WholeBody(
-                            header=imgmsg.header,
-                            # extra point #0 since WholeBody counts from 1
-                            pose=[
-                                BodyKeypoint(x=x, y=y, score=conf, id=int(id))
-                                for (x, y, conf, id) in pose
-                            ],
-                            is_norm=False,
-                            track=TrackData(
-                                label="person",
-                                keypoints=[
-                                    Point(
-                                        x=kp[0] / img.shape[1], y=kp[1] / img.shape[0]
-                                    )
-                                    for kp in pose
-                                ],
-                                keypoint_scores=[kp[2] for kp in pose],
-                            ),
-                        )
-                        for pose in poses
-                    ],
-                    infer_start_time=infer_start,
-                    infer_end_time=infer_end,
+            norm_x = poses[:, self._tracked_key, 0] / img.shape[1]
+            norm_y = poses[:, self._tracked_key, 1] / img.shape[0]
+
+            arrmsg = WholeBodyArray(header=imgmsg.header)
+            arrmsg.profiling.infer_start_time = infer_start
+            arrmsg.profiling.infer_end_time = infer_end
+
+            for i, pose in enumerate(poses):
+                posemsg = WholeBody(header=imgmsg.header)
+                posemsg.x.frombytes(pose[:, 0].astype(np.float32).data.cast("b"))
+                posemsg.y.frombytes(pose[:, 1].astype(np.float32).data.cast("b"))
+                posemsg.scores.frombytes(pose[:, 2].astype(np.float32).data.cast("b"))
+                posemsg.ids.frombytes(pose[:, 3].astype(np.int16).data.cast("b"))
+                posemsg.is_norm = False
+
+                posemsg.track.label = "person"
+                posemsg.track.x.frombytes(norm_x[i].astype(np.float32).data.cast("b"))
+                posemsg.track.y.frombytes(norm_y[i].astype(np.float32).data.cast("b"))
+                posemsg.track.scores.frombytes(
+                    pose[self._tracked_key, 2].astype(np.float32).data.cast("b")
                 )
-            )
+
+                arrmsg.poses.append(posemsg)
+
+            self._pred_pub.publish(arrmsg)
 
         if self._marker_pub.get_subscription_count() > 0:
-            self._marker_pub.publish(
-                ImageMarkerArray(
-                    markers=[
-                        ImageMarker(
-                            header=imgmsg.header,
-                            scale=1.0,
-                            type=ImageMarker.POINTS,
-                            outline_color=ColorRGBA(r=1.0, a=1.0),
-                            points=[
-                                Point(x=kp[0], y=kp[1])
-                                for kp in pose
-                                if kp[2] > self.cfg.score_threshold
-                            ],
-                        )
-                        for pose in poses
-                    ]
-                )
-            )
+            markersmsg = ImageMarkerArray()
+
+            for pose in poses:
+                marker = ImageMarker(header=imgmsg.header)
+                marker.scale = 1.0
+                marker.type = ImageMarker.POINTS
+                marker.outline_color.r = 1.0
+                marker.outline_color.a = 1.0
+                for kp in pose[pose[:, 2] > self.cfg.score_threshold]:
+                    marker.points.append(Point(x=kp[0], y=kp[1]))
+                markersmsg.markers.append(marker)
+            self._marker_pub.publish(markersmsg)
 
 
 def main(args=None):

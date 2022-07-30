@@ -28,7 +28,7 @@ import numpy as np
 
 def bbox_xyxy2cs(bbox: np.ndarray, ratio_wh=192 / 256, pad=1.25):
     """Converts abs bbox N*(x,y,x,y) to abs centre N*(x,y) & abs scale N*(sx,sy)"""
-    x1, y1, x2, y2 = bbox.astype(np.float32).T[:4]
+    x1, y1, x2, y2 = bbox.T[:4]
     w, h = x2 - x1, y2 - y1
     centers = np.stack((x1 + 0.5 * w, y1 + 0.5 * h), axis=1)
 
@@ -179,7 +179,7 @@ def heatmap2keypoints(heatmaps: np.ndarray, centers: np.ndarray, scales: np.ndar
     ind = np.argmax(tmp1, 2).reshape((n, k, 1))
     maxvals = np.amax(tmp1, 2).reshape((n, k, 1))
 
-    preds = np.tile(ind, (1, 1, 2)).astype(np.float32)
+    preds = np.tile(ind.astype(np.float32), (1, 1, 2))
     preds[..., 0] = preds[..., 0] % w
     preds[..., 1] = preds[..., 1] // w
     preds = np.where(np.tile(maxvals, (1, 1, 2)) > 0.0, preds, -1)
