@@ -65,7 +65,7 @@ PROVIDER_OPTS = [
 
 @dataclass
 class WholeBodyCfg(JobCfg):
-    model_path: str = "/models/vipnas_mbv3.onnx"
+    model_path: str = "/models/vipnas_res50.onnx"
     """Local path of model."""
     frames_in_topic: str = "~/frames_in"
     """Video frames to predict on."""
