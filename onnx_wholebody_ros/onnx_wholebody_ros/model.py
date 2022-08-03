@@ -6,7 +6,6 @@ from copy import copy
 
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSPresetProfiles
 from ros2topic.api import get_msg_class
 from cv_bridge import CvBridge
 from message_filters import Subscriber, ApproximateTimeSynchronizer
@@ -25,7 +24,12 @@ from foxglove_msgs.msg import ImageMarkerArray
 from visualization_msgs.msg import ImageMarker
 from geometry_msgs.msg import Point
 from nicepynode import Job, JobCfg
-from nicepynode.utils import convert_bboxes, declare_parameters_from_dataclass
+from nicepynode.utils import (
+    convert_bboxes,
+    declare_parameters_from_dataclass,
+    RT_SUB_PROFILE,
+    RT_PUB_PROFILE,
+)
 
 from onnx_wholebody_ros.processing import bbox_xyxy2cs, crop_bbox, heatmap2keypoints
 
@@ -33,9 +37,9 @@ NODE_NAME = "mmpose_model"
 
 cv_bridge = CvBridge()
 
-# Realtime Profile: don't bog down publisher when model is slow
-RT_PROFILE = copy(QoSPresetProfiles.SENSOR_DATA.value)
-RT_PROFILE.depth = 0
+RT_SUB_PROFILE = copy(RT_SUB_PROFILE)
+RT_SUB_PROFILE.depth = 30  # increase buffer for syncher
+
 
 # Tuning Guide: https://github.com/microsoft/onnxruntime-openenclave/blob/openenclave-public/docs/ONNX_Runtime_Perf_Tuning.md
 # and https://onnxruntime.ai/docs/performance/tune-performance.html
@@ -146,21 +150,23 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
             # blocks until image publisher is up!
             get_msg_class(node, cfg.frames_in_topic, blocking=True),
             cfg.frames_in_topic,
-            qos_profile=RT_PROFILE,
+            qos_profile=RT_SUB_PROFILE,
         )
 
         self._bbox_sub = Subscriber(
-            node, ObjDet2Ds, cfg.bbox_in_topic, qos_profile=RT_PROFILE
+            node, ObjDet2Ds, cfg.bbox_in_topic, qos_profile=RT_SUB_PROFILE
         )
 
         self._synch = ApproximateTimeSynchronizer(
-            (self._frames_sub, self._bbox_sub), 10, 0.06
+            (self._frames_sub, self._bbox_sub), 60, 0.06
         )
         self._synch.registerCallback(self._on_input)
 
-        self._pred_pub = node.create_publisher(WholeBodyArray, cfg.preds_out_topic, 5)
+        self._pred_pub = node.create_publisher(
+            WholeBodyArray, cfg.preds_out_topic, RT_PUB_PROFILE
+        )
         self._marker_pub = node.create_publisher(
-            ImageMarkerArray, cfg.markers_out_topic, 5
+            ImageMarkerArray, cfg.markers_out_topic, RT_PUB_PROFILE
         )
         self.log.info("Ready")
 
