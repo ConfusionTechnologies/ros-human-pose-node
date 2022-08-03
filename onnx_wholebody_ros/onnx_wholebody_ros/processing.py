@@ -7,6 +7,7 @@ https://github.com/open-mmlab/mmpose/blob/master/configs/wholebody/2d_kpt_sview_
 I took liberties when implementing it for conciseness & performance
 """
 from __future__ import annotations
+
 import cv2
 import numpy as np
 

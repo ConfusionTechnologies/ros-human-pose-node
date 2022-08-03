@@ -1,44 +1,40 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-import sys
-from typing import Union
-from copy import copy
 
-import rclpy
-from rclpy.node import Node
-from ros2topic.api import get_msg_class
-from cv_bridge import CvBridge
-from message_filters import Subscriber, ApproximateTimeSynchronizer
+import sys
+from copy import copy
+from dataclasses import dataclass, field
+from typing import Union
 
 import numpy as np
-from onnxruntime import (
-    InferenceSession,
-    SessionOptions,
-    ExecutionMode,
-    GraphOptimizationLevel,
-)
-
-from sensor_msgs.msg import Image
-from nicefaces.msg import ObjDet2Ds, WholeBodyArray, BBox2Ds, WholeBody
+import rclpy
+from cv_bridge import CvBridge
 from foxglove_msgs.msg import ImageMarkerArray
-from visualization_msgs.msg import ImageMarker
 from geometry_msgs.msg import Point
+from message_filters import ApproximateTimeSynchronizer, Subscriber
+from nicefaces.msg import BBox2Ds, ObjDet2Ds, WholeBody, WholeBodyArray
 from nicepynode import Job, JobCfg
 from nicepynode.utils import (
+    RT_PUB_PROFILE,
+    RT_SUB_PROFILE,
     convert_bboxes,
     declare_parameters_from_dataclass,
-    RT_SUB_PROFILE,
-    RT_PUB_PROFILE,
 )
+from onnxruntime import (
+    ExecutionMode,
+    GraphOptimizationLevel,
+    InferenceSession,
+    SessionOptions,
+)
+from rclpy.node import Node
+from ros2topic.api import get_msg_class
+from sensor_msgs.msg import Image
+from visualization_msgs.msg import ImageMarker
 
 from onnx_wholebody_ros.processing import bbox_xyxy2cs, crop_bbox, heatmap2keypoints
 
 NODE_NAME = "mmpose_model"
 
 cv_bridge = CvBridge()
-
-RT_SUB_PROFILE = copy(RT_SUB_PROFILE)
-RT_SUB_PROFILE.depth = 30  # increase buffer for syncher
 
 
 # Tuning Guide: https://github.com/microsoft/onnxruntime-openenclave/blob/openenclave-public/docs/ONNX_Runtime_Perf_Tuning.md
