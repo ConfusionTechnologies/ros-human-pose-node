@@ -25,7 +25,7 @@ from foxglove_msgs.msg import ImageMarkerArray
 from visualization_msgs.msg import ImageMarker
 from geometry_msgs.msg import Point
 from nicepynode import Job, JobCfg
-from nicepynode.utils import convert_bboxes
+from nicepynode.utils import convert_bboxes, declare_parameters_from_dataclass
 
 from onnx_wholebody_ros.processing import bbox_xyxy2cs, crop_bbox, heatmap2keypoints
 
@@ -128,17 +128,9 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
     def attach_params(self, node: Node, cfg: WholeBodyCfg):
         super(WholeBodyPredictor, self).attach_params(node, cfg)
 
-        node.declare_parameter("model_path", cfg.model_path)
-        node.declare_parameter("frames_in_topic", cfg.frames_in_topic)
-        node.declare_parameter("bbox_in_topic", cfg.bbox_in_topic)
-        node.declare_parameter("preds_out_topic", cfg.preds_out_topic)
-        node.declare_parameter("markers_out_topic", cfg.markers_out_topic)
-        # onnx_providers is hardcoded
-        # img_wh is hardcoded
-        node.declare_parameter("score_threshold", cfg.score_threshold)
-        node.declare_parameter("crop_pad", cfg.crop_pad)
-        # mean_rgb is hardcoded
-        # std_rgb is hardcoded
+        declare_parameters_from_dataclass(
+            node, cfg, exclude_keys=["onnx_providers", "img_wh", "mean_rgb", "std_rgb"]
+        )
 
     def attach_behaviour(self, node: Node, cfg: WholeBodyCfg):
         super(WholeBodyPredictor, self).attach_behaviour(node, cfg)
