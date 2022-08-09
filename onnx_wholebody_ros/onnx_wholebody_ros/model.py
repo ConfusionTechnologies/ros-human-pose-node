@@ -15,6 +15,7 @@ from nicepynode import Job, JobCfg
 from nicepynode.utils import (
     RT_PUB_PROFILE,
     RT_SUB_PROFILE,
+    append_array,
     convert_bboxes,
     declare_parameters_from_dataclass,
 )
@@ -295,25 +296,19 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
             for i, pose in enumerate(poses):
                 posemsg = WholeBody(header=imgmsg.header)
-                posemsg.x.frombytes(pose[:, 0].astype(np.float32).data.cast("b"))
-                posemsg.y.frombytes(pose[:, 1].astype(np.float32).data.cast("b"))
-                posemsg.scores.frombytes(pose[:, 2].astype(np.float32).data.cast("b"))
-                posemsg.ids.frombytes(pose[:, 3].astype(np.int16).data.cast("b"))
+                append_array(posemsg.x, pose[:, 0])
+                append_array(posemsg.y, pose[:, 1])
+                append_array(posemsg.scores, pose[:, 2])
+                append_array(posemsg.ids, pose[:, 3], dtype=np.int16)
                 posemsg.is_norm = False
 
                 if has_tracks:
                     posemsg.track = detsmsg.tracks[i]
                 else:
                     posemsg.track.label = "person"
-                    posemsg.track.x.frombytes(
-                        norm_x[i].astype(np.float32).data.cast("b")
-                    )
-                    posemsg.track.y.frombytes(
-                        norm_y[i].astype(np.float32).data.cast("b")
-                    )
-                    posemsg.track.scores.frombytes(
-                        pose[self._tracked_key, 2].astype(np.float32).data.cast("b")
-                    )
+                    append_array(posemsg.track.x, norm_x[i])
+                    append_array(posemsg.track.y, norm_y[i])
+                    append_array(posemsg.track.scores, pose[self._tracked_key, 2])
 
                 arrmsg.poses.append(posemsg)
 
