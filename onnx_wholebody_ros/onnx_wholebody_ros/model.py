@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from copy import copy
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -137,9 +136,6 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
         self._init_model(cfg)
 
-        # Could use ros2topic to determine image type at runtime, GIVEN publisher
-        # goes up first (it won't always). Trying to detect when publisher goes up
-        # is too complex, so just make it a config option...
         self.log.info(f"Waiting for publisher@{cfg.frames_in_topic}...")
         self._frames_sub = Subscriber(
             node,
@@ -154,7 +150,9 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
         )
 
         self._synch = ApproximateTimeSynchronizer(
-            (self._frames_sub, self._bbox_sub), 60, 0.06
+            (self._frames_sub, self._bbox_sub),
+            10,  # max 10 frame difference between pred & frame
+            1 / 15,  # min 15 FPS waiting to sync
         )
         self._synch.registerCallback(self._on_input)
 

@@ -7,13 +7,6 @@ from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 
-# By right, Nicepipe main launch file responsible for orchestration
-# This demo file is just for convenience, hence the undeclared dependencies
-
-# TODO:
-# Use https://github.com/ros-tooling/topic_tools to convert ObjDet2DArray
-# to BBox2DArray for wholebody node
-
 
 def generate_launch_description():
     wholebody_node = Node(
