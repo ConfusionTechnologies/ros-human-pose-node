@@ -151,8 +151,8 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
         self._synch = ApproximateTimeSynchronizer(
             (self._frames_sub, self._bbox_sub),
-            10,  # max 10 frame difference between pred & frame
-            1 / 15,  # min 15 FPS waiting to sync
+            30,  # max 10 frame difference between pred & frame
+            1 / 30,  # min 30 FPS waiting to sync
         )
         self._synch.registerCallback(self._on_input)
 
