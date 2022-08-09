@@ -281,6 +281,8 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
         infer_end = self.get_timestamp()
 
+        # if the dets has already been tracked earlier
+        has_tracks = any(t.id != -1 for t in detsmsg.tracks)
         # NOTE: filtering confidence here has no performance benefit here
 
         if self._pred_pub.get_subscription_count() > 0:
@@ -299,12 +301,19 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
                 posemsg.ids.frombytes(pose[:, 3].astype(np.int16).data.cast("b"))
                 posemsg.is_norm = False
 
-                posemsg.track.label = "person"
-                posemsg.track.x.frombytes(norm_x[i].astype(np.float32).data.cast("b"))
-                posemsg.track.y.frombytes(norm_y[i].astype(np.float32).data.cast("b"))
-                posemsg.track.scores.frombytes(
-                    pose[self._tracked_key, 2].astype(np.float32).data.cast("b")
-                )
+                if has_tracks:
+                    posemsg.track = detsmsg.tracks[i]
+                else:
+                    posemsg.track.label = "person"
+                    posemsg.track.x.frombytes(
+                        norm_x[i].astype(np.float32).data.cast("b")
+                    )
+                    posemsg.track.y.frombytes(
+                        norm_y[i].astype(np.float32).data.cast("b")
+                    )
+                    posemsg.track.scores.frombytes(
+                        pose[self._tracked_key, 2].astype(np.float32).data.cast("b")
+                    )
 
                 arrmsg.poses.append(posemsg)
 
