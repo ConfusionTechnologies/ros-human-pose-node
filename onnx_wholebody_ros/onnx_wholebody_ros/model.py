@@ -77,7 +77,6 @@ class WholeBodyCfg(JobCfg):
     """Output topic for visualization markers."""
     onnx_providers: list[str] = field(default_factory=lambda: ["CUDAExecutionProvider"])
     """ONNX runtime providers."""
-    # TODO: img_wh should be embedded within exported model metadata
     img_wh: tuple[int, int] = (192, 256)
     """Input resolution."""
     score_threshold: float = 0.5
@@ -115,9 +114,7 @@ class WholeBodyCfg(JobCfg):
     """list of tuples or int indexes. tuples are converted to slices to index. which keypoints to expose in TrackData for tracker nodes. filtering improves performance."""
 
 
-# TODO:
-# - move wholebody to mediapipe conversion to frontend
-# - refactor out common parts with Yolo code
+# TODO: refactor out common parts with Yolo code
 
 
 @dataclass
