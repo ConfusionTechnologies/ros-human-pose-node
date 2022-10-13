@@ -172,7 +172,9 @@ def remap_keypoints(
     return coords * factor + center - scale * 0.5
 
 
-def heatmap2keypoints(heatmaps: np.ndarray, centers: np.ndarray, scales: np.ndarray):
+def heatmap2keypoints(
+    heatmaps: np.ndarray, centers: np.ndarray, scales: np.ndarray, post_process=True
+):
     n, k, h, w = heatmaps.shape
 
     # processing heatmap into coords and conf
@@ -185,10 +187,11 @@ def heatmap2keypoints(heatmaps: np.ndarray, centers: np.ndarray, scales: np.ndar
     preds[..., 1] = preds[..., 1] // w
     preds = np.where(np.tile(maxvals, (1, 1, 2)) > 0.0, preds, -1)
 
-    heatmaps = np.log(np.maximum(gaussian_blur(heatmaps, 11), 1e-10))
-    for i in range(n):
-        for j in range(k):
-            preds[i][j] = taylor(heatmaps[i][j], preds[i][j])
+    if post_process:
+        heatmaps = np.log(np.maximum(gaussian_blur(heatmaps, 11), 1e-10))
+        for i in range(n):
+            for j in range(k):
+                preds[i][j] = taylor(heatmaps[i][j], preds[i][j])
 
     # mask = 1 < preds[:, :, 0] < w - 1 & 1 < preds[:, :, 1] < h - 1
     # diff = np.array(tuple(heatmaps))

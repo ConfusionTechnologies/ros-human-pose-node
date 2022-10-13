@@ -83,6 +83,11 @@ class WholeBodyCfg(JobCfg):
     """Minimum confidence level for filtering (ONLY VISUALIZATION MARKERS)"""
     crop_pad: float = 1.25
     """How much additional padding to crop around the bbox."""
+    # TODO: heatmap post-processing is the largest performance hit for the performance node
+    # when all its essentially doing is blurring a low-res heatmap and finding the max point
+    # is there a more efficient/pybinded way? (12Hz -> 6Hz)
+    post_process_heatmap: bool = False
+    """Apply post processing to heatmap to get more accurate coordinates."""
     # idk are these imagenet's standardization values? anyways, vipnas_res50 was trained on these...
     # TODO: mean_rgb & std_rgb should be in model's metadata
     mean_rgb: tuple[float, float, float] = (0.485, 0.456, 0.406)
@@ -173,7 +178,7 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
     def on_params_change(self, node: Node, changes: dict):
         self.log.info(f"Config changed: {changes}.")
-        if not all(n in ("crop_pad",) for n in changes):
+        if not all(n in ("crop_pad", "post_process_heatmap") for n in changes):
             self.log.info(f"Config change requires restart.")
             return True
         return False
@@ -245,7 +250,9 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
             :, self._include_key - 1, ...
         ]  # convert id -> index (id start from 1, index from 0)
 
-        coords, conf = heatmap2keypoints(y, c, s)
+        coords, conf = heatmap2keypoints(
+            y, c, s, post_process=self.cfg.post_process_heatmap
+        )
         # shape is (n, include_kps, 4), where 4 is (x, y, conf, id)
         poses = np.concatenate(
             (coords, conf, np.tile(self._include_key, (conf.shape[0], 1))[..., None]),
@@ -314,6 +321,14 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
         if self._marker_pub.get_subscription_count() > 0:
             markersmsg = ImageMarkerArray()
 
+            # temporary to benchmark model
+            # if True:
+            #     marker = ImageMarker(header=imgmsg.header)
+            #     markersmsg.markers.append(marker)
+            #     self._marker_pub.publish(markersmsg)
+            #     return
+
+            # these loops cause a significant performance hit 16Hz -> 12Hz but unavoidable with using C++ instead
             for pose in poses:
                 marker = ImageMarker(header=imgmsg.header)
                 marker.scale = 1.0
