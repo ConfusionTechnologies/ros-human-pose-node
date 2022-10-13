@@ -117,6 +117,8 @@ class WholeBodyCfg(JobCfg):
         default_factory=lambda: [1, 6, 7, 12, 13]
     )
     """list of tuples or int indexes. tuples are converted to slices to index. which keypoints to expose in TrackData for tracker nodes. filtering improves performance."""
+    normalize_coords: bool = False
+    """Whether to normalize coordinates."""
 
 
 # TODO: refactor out common parts with Yolo code
@@ -178,7 +180,10 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
     def on_params_change(self, node: Node, changes: dict):
         self.log.info(f"Config changed: {changes}.")
-        if not all(n in ("crop_pad", "post_process_heatmap") for n in changes):
+        if not all(
+            n in ("crop_pad", "post_process_heatmap", "normalize_coords")
+            for n in changes
+        ):
             self.log.info(f"Config change requires restart.")
             return True
         return False
@@ -300,11 +305,16 @@ class WholeBodyPredictor(Job[WholeBodyCfg]):
 
             for i, pose in enumerate(poses):
                 posemsg = WholeBody(header=imgmsg.header)
-                append_array(posemsg.x, pose[:, 0])
-                append_array(posemsg.y, pose[:, 1])
+
+                posemsg.is_norm = self.cfg.normalize_coords
+                if self.cfg.normalize_coords:
+                    append_array(posemsg.x, pose[:, 0] / img.shape[1])
+                    append_array(posemsg.y, pose[:, 1] / img.shape[0])
+                else:
+                    append_array(posemsg.x, pose[:, 0])
+                    append_array(posemsg.y, pose[:, 1])
                 append_array(posemsg.scores, pose[:, 2])
                 append_array(posemsg.ids, pose[:, 3], dtype=np.int16)
-                posemsg.is_norm = False
 
                 if has_tracks:
                     posemsg.track = detsmsg.tracks[i]
